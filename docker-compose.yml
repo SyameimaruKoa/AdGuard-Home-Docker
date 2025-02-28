@@ -1,0 +1,22 @@
+services:
+  adgrd:
+    image: adguard/adguardhome:latest
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "853:853/tcp"
+      - "13000:80/tcp"
+      #- "3000:3000/tcp"
+    environment:
+      - TZ=Asia/Tokyo
+    volumes:
+      - /srv/adgrd/work:/opt/adguardhome/work
+      - ./config:/opt/adguardhome/conf
+      - /var/log/adgrd:/var/log/adgrd
+    #networks:
+      #- adgnet
+    network_mode: host
+
+#networks:
+  #adgnet:
