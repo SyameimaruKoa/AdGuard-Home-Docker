@@ -61,7 +61,6 @@ echo "============================================================"
 # デフォルトインターフェースと IPv4/IPv6 ゲートウェイの自動検出
 PARENT_IF=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
 GATEWAY_IP=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')
-GATEWAY_IP6=$(ip -6 route show default 2>/dev/null | awk '/default/{print $3; exit}')
 
 if [ -z "$PARENT_IF" ] || [ -z "$GATEWAY_IP" ]; then
     echo "ERROR: デフォルトルートが見つかりませんでした。ネットワーク接続を確認してください。"
@@ -69,7 +68,7 @@ if [ -z "$PARENT_IF" ] || [ -z "$GATEWAY_IP" ]; then
 fi
 
 SUBNET_CIDR=$(ip route show dev "$PARENT_IF" 2>/dev/null | grep '/' | awk '{print $1; exit}')
-SUBNET_CIDR6=$(ip -6 route show dev "$PARENT_IF" 2>/dev/null | grep 'inet6' | grep -v 'fe80' | grep 'scope global' | awk '{print $2; exit}')
+SUBNET_CIDR6=$(ip -6 route show dev "$PARENT_IF" 2>/dev/null | grep -v 'fe80' | awk '/\/[0-9]+/{print $1; exit}')
 
 if [ -z "$SUBNET_CIDR" ]; then
     echo "ERROR: インターフェース $PARENT_IF のサブネットが検出できませんでした。"
@@ -81,7 +80,6 @@ echo "  - 物理インターフェース: $PARENT_IF"
 echo "  - 物理IPv4ゲートウェイ  : $GATEWAY_IP"
 echo "  - 物理IPv4サブネット    : $SUBNET_CIDR"
 if [ -n "$SUBNET_CIDR6" ]; then
-    echo "  - 物理IPv6ゲートウェイ  : ${GATEWAY_IP6:-自動/SLAAC}"
     echo "  - 物理IPv6サブネット    : $SUBNET_CIDR6"
 fi
 echo ""
@@ -102,9 +100,6 @@ else
     CREATE_ARGS=("-d" "macvlan" "--enable-ipv6" "--subnet=$SUBNET_CIDR" "--gateway=$GATEWAY_IP")
     if [ -n "$SUBNET_CIDR6" ]; then
         CREATE_ARGS+=("--subnet=$SUBNET_CIDR6")
-        if [ -n "$GATEWAY_IP6" ]; then
-            CREATE_ARGS+=("--gateway=$GATEWAY_IP6")
-        fi
     fi
     CREATE_ARGS+=("-o" "parent=$PARENT_IF" "$MACVLAN_NET_NAME")
 
