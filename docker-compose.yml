@@ -34,6 +34,7 @@ services:
         volumes:
             - ./config:/opt/adguardhome/conf
             - ./work:/opt/adguardhome/work
+            - ./hosts:/etc/hosts:ro
 
 networks:
     adgnet:
