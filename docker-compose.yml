@@ -10,10 +10,12 @@ services:
             - /dev/net/tun:/dev/net/tun
         sysctls:
             - net.ipv6.conf.all.disable_ipv6=0
+            - net.ipv6.conf.default.disable_ipv6=0
             - net.ipv4.conf.all.src_valid_mark=1
             - net.ipv4.ip_forward=1
             - net.ipv6.conf.all.forwarding=1
             - net.ipv6.conf.all.accept_ra=2
+            - net.ipv6.conf.default.accept_ra=2
         environment:
             - TZ=${TZ:-Asia/Tokyo}
             - TS_AUTHKEY=${TS_AUTHKEY}
@@ -26,6 +28,7 @@ services:
         networks:
             adgnet:
                 ipv4_address: ${MACVLAN_IP}
+                ipv6_address: ${MACVLAN_IP6}
 
     adgrd:
         image: adguard/adguardhome:latest
