@@ -1,12 +1,16 @@
 services:
     tailscale:
         image: tailscale/tailscale:latest
-        container_name: tailscale-node
+        container_name: adguard-tailscale
         restart: unless-stopped
         cap_add:
             - NET_ADMIN
+            - NET_RAW
         devices:
             - /dev/net/tun:/dev/net/tun
+        sysctls:
+            - net.ipv6.conf.all.disable_ipv6=0
+            - net.ipv6.conf.all.forwarding=1
         environment:
             - TZ=${TZ:-Asia/Tokyo}
             - TS_AUTHKEY=${TS_AUTHKEY}
