@@ -21,8 +21,11 @@ services:
             - TS_USERSPACE=false
             - TS_EXTRA_ARGS=--accept-dns=false
         networks:
-            - adgnet
-            - ipvlan_wifi
+            adgnet:
+                ipv4_address: ${MACVLAN_IP}
+            ipvlan_wifi:
+                ipv4_address: ${IPVLAN_WIFI_IP}
+
         volumes:
             - ./data_tailscale:/var/lib/tailscale
             - ts_socket:/tmp
