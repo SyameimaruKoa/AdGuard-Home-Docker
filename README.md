@@ -10,6 +10,7 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 - **Macvlan 独立ネットワーク**: 物理 LAN 上の専用 IP アドレス（DHCP または 固定 IP）で起動し、ポート衝突を防ぎます。
 - **IPv4 / IPv6 デュアルスタック対応**: SLAAC (`accept_ra=2`) 対応および IPv6 サブネット自動検出に対応しています。
 - **Tailnet DNS 特化**: `--accept-dns=false` を標準指定し、コンテナ内での DNS ループを防ぎつつ Tailnet 内の DNS サーバーとして機能します。
+- **全自動 Tailnet デバイス同期 (`sync_tailscale_hosts.sh`)**: Tailscale 上の全デバイス（IPv4 / IPv6）の IP アドレスとホスト名を自動抽出・マッピングし、AdGuard Home 上で即座に逆引き（ホスト名表示）を可能にします。
 - **認証キー期限切れ耐性**: `./data_tailscale` の永続化により、Initial Auth Key が期限切れになっても再起動時に認証が維持されます。
 - **全自動環境構築 (`setup.sh`)**: ホストの物理ネットワーク環境（NIC名、サブネット、ゲートウェイ）を自動検出し、`.env` を生成します。
 
@@ -19,14 +20,16 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 
 ```text
 .
-├── docker-compose.yml   # コンテナ構成定義（Sidecarパターン）
-├── setup.sh             # 物理ネットワーク自動検出 & .env 生成スクリプト
-├── .env.example         # 環境変数テンプレート
-├── .gitignore           # 永続化データ・設定ファイルの除外設定
-├── README.md            # 本ドキュメント
-├── config/              # [自動生成] AdGuard Home 設定ディレクトリ
-├── work/                # [自動生成] AdGuard Home データベース・作業ログ
-└── data_tailscale/      # [自動生成] Tailscale 認証ステート永続化ディレクトリ
+├── docker-compose.yml       # コンテナ構成定義（Sidecarパターン）
+├── setup.sh                 # 物理ネットワーク自動検出 & .env 生成スクリプト
+├── sync_tailscale_hosts.sh  # Tailnet 端末 (IPv4/IPv6) 自動同期 & hosts 生成スクリプト
+├── .env.example             # 環境変数テンプレート
+├── .gitignore               # 永続化データ・設定ファイルの除外設定
+├── README.md                # 本ドキュメント
+├── hosts                    # [自動生成] Tailscale 端末の IP/ホスト名マッピング
+├── config/                  # [自動生成] AdGuard Home 設定ディレクトリ
+├── work/                    # [自動生成] AdGuard Home データベース・作業ログ
+└── data_tailscale/          # [自動生成] Tailscale 認証ステート永続化ディレクトリ
 ```
 
 ---
@@ -63,21 +66,41 @@ nano .env
 # TS_AUTHKEY=tskey-auth-xxxx-xxxx
 ```
 
-### 3. コンテナの起動
+### 3. コンテナの起動と Tailnet デバイス同期
 
 ```bash
+# コンテナの起動
 docker compose up -d
+
+# Tailscale 端末 (IPv4/IPv6) マッピングの自動生成
+./sync_tailscale_hosts.sh
 ```
 
-起動後、指定した IP アドレス（または Tailscale IP）の `http://<IP>:80` にアクセスして AdGuard Home の初期セットアップ画面を開きます。
+---
+
+## 🤖 Tailnet デバイス自動同期 (`sync_tailscale_hosts.sh`)
+
+Tailscale の仕様上、MagicDNS (`100.100.100.100`) では IPv6 逆引き (`.ip6.arpa`) が応答しません (`SERVFAIL`)。
+本スクリプトを実行することで、Tailnet 内の全デバイス（IPv4 および IPv6）の IP アドレスとホスト名を自動取得し、AdGuard Home 上で完全に逆引き解決（ホスト名表示）できるようにします。
+
+### 使い方
+
+```bash
+# ヘルプ表示
+./sync_tailscale_hosts.sh -h
+
+# 手動同期の実行
+./sync_tailscale_hosts.sh
+
+# Cron 等による定期実行 (5分ごとに静かに自動更新)
+*/5 * * * * cd /opt/Docker_Container/AdGuard-Home-DockerConfig && ./sync_tailscale_hosts.sh --quiet
+```
 
 ---
 
 ## 🔑 Tailscale 逆引き（PTR）・正引き（DNS）設定
 
 ### IPv4 (`100.x.y.z`) の設定方法
-
-Tailscale の IPv4 逆引き (`100.in-addr.arpa`) および Tailnet ドメイン正引き (`ts.net`) を有効化する手順です。
 
 1. AdGuard Home の Web UI で **設定** ➔ **DNS設定** を開きます。
 2. **アップストリームDNSサーバー**（上の大きな欄）に以下を追加します：
@@ -87,22 +110,6 @@ Tailscale の IPv4 逆引き (`100.in-addr.arpa`) および Tailnet ドメイン
    ```
 3. **プライベートリバースDNSサーバー**（下の欄）からは `100.in-addr.arpa` を除外し、物理ルーターの IP（例: `192.168.1.1` 等）のみを記述します。
 4. **プライベートリバースDNSの解決を有効にする** にチェックを入れて保存します。
-
-> [!NOTE]
-> `100.in-addr.arpa` を下の「プライベートリバースDNSサーバー」欄に入れると、AdGuard Home の RFC1918 バリデーションにより `Error 400` になるため、必ず上の「アップストリームDNSサーバー」欄に指定します。
-
----
-
-### IPv6 (`fd7a:115c:a1e0::...`) の逆引きについて
-
-Tailscale 側の MagicDNS (`100.100.100.100`) は、仕様上 **IPv6 の逆引きクエリ (`.ip6.arpa`) に対する回答機能（PTRレコード）を実装していません (`SERVFAIL` を返します)**。
-
-IPv6 アドレスからのアクセスを AdGuard Home 上でホスト名表示させたい場合は、以下のいずれかの方法で設定します：
-
-1. **AdGuard Home の「クライアント設定」に登録（推奨）**:
-   - **設定** ➔ **クライアント設定** から新規クライアントを追加し、Tailscale の IPv6 アドレス（`fd7a:115c:a1e0::...`）とホスト名を紐付けます。
-2. **DNS 書き換え (DNS Rewrites)**:
-   - **フィルター** ➔ **DNS書き換え** から、正引き (`device.ts.net` ➔ `fd7a:...`) を登録すると、AdGuard Home 内で相互参照されます。
 
 ---
 
