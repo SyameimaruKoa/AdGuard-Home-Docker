@@ -18,7 +18,8 @@ show_help() {
     echo "説明:"
     echo "  現在のLinuxホストのデフォルトルートから、物理インターフェース名、"
     echo "  ゲートウェイ、サブネット情報を自動検出して .env ファイルを生成します。"
-    echo "  DHCP（自動割当）または固定IP設定の両方に対応しています。"
+    echo "  ホスト上に既存の Docker Macvlan ネットワークが存在する場合は自動再利用し、"
+    echo "  存在しない場合は 'macvlan_lan' ネットワークを安全に自動作成します。"
     exit 0
 }
 
@@ -73,13 +74,34 @@ if [ -z "$SUBNET_CIDR" ]; then
     exit 1
 fi
 
-echo "検出されたネットワーク環境:"
-echo "  - 物理インターフェース (MACVLAN_PARENT): $PARENT_IF"
-echo "  - 物理ゲートウェイ       (MACVLAN_GATEWAY): $GATEWAY_IP"
-echo "  - 物理サブネット         (MACVLAN_SUBNET) : $SUBNET_CIDR"
+echo "検出された物理ネットワーク環境:"
+echo "  - 物理インターフェース: $PARENT_IF"
+echo "  - 物理ゲートウェイ      : $GATEWAY_IP"
+echo "  - 物理サブネット        : $SUBNET_CIDR"
 echo ""
 
-# IP設定モードの選択（対話モードまたは引数指定）
+# ------------------------------------------------------------
+# 既存 Docker Macvlan ネットワークの自動検索・安全作成
+# ------------------------------------------------------------
+EXISTING_NET=$(docker network ls --filter driver=macvlan --format '{{.Name}}' 2>/dev/null | head -n 1)
+
+if [ -n "$EXISTING_NET" ]; then
+    MACVLAN_NET_NAME="$EXISTING_NET"
+    echo "既存の Docker Macvlan ネットワークを検出しました: '$MACVLAN_NET_NAME'"
+    echo "プール重複エラー防止のため、このネットワークを再利用します。"
+else
+    MACVLAN_NET_NAME="macvlan_lan"
+    echo "Docker Macvlan ネットワークが見つかりません。新規作成します: '$MACVLAN_NET_NAME'"
+    docker network create -d macvlan \
+        --subnet="$SUBNET_CIDR" \
+        --gateway="$GATEWAY_IP" \
+        -o parent="$PARENT_IF" \
+        "$MACVLAN_NET_NAME" || true
+fi
+
+echo ""
+
+# IP設定モードの選択
 if [ "$USE_DHCP" = true ]; then
     MACVLAN_IP_VALUE=""
     echo "モード: DHCP / 自動IP割り当て"
@@ -87,7 +109,6 @@ elif [ -n "$STATIC_IP" ]; then
     MACVLAN_IP_VALUE="$STATIC_IP"
     echo "モード: 固定IP ($MACVLAN_IP_VALUE)"
 else
-    # 端末で対話的に入力要求（パイプ実行時等のフォールバック付）
     if [ -t 0 ]; then
         echo "IP割り当てモードを選択してください:"
         echo "  1) DHCP / 自動IP割り当て (デフォルト)"
@@ -116,11 +137,13 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # 検出したパラメータを .env に反映
+sed -i '/^MACVLAN_NETWORK_NAME=/d' "$ENV_FILE"
 sed -i '/^MACVLAN_PARENT=/d' "$ENV_FILE"
 sed -i '/^MACVLAN_SUBNET=/d' "$ENV_FILE"
 sed -i '/^MACVLAN_GATEWAY=/d' "$ENV_FILE"
 sed -i '/^MACVLAN_IP=/d' "$ENV_FILE"
 
+echo "MACVLAN_NETWORK_NAME=$MACVLAN_NET_NAME" >> "$ENV_FILE"
 echo "MACVLAN_PARENT=$PARENT_IF" >> "$ENV_FILE"
 echo "MACVLAN_SUBNET=$SUBNET_CIDR" >> "$ENV_FILE"
 echo "MACVLAN_GATEWAY=$GATEWAY_IP" >> "$ENV_FILE"
@@ -128,10 +151,11 @@ echo "MACVLAN_IP=$MACVLAN_IP_VALUE" >> "$ENV_FILE"
 
 echo "============================================================"
 echo " .env ファイルの更新が完了しました！"
+echo "  使用ネットワーク: $MACVLAN_NET_NAME (external)"
 if [ -n "$MACVLAN_IP_VALUE" ]; then
-    echo "  設定IP: 固定IP ($MACVLAN_IP_VALUE)"
+    echo "  設定IP        : 固定IP ($MACVLAN_IP_VALUE)"
 else
-    echo "  設定IP: DHCP / 自動割当 (MACVLAN_IPは空設定)"
+    echo "  設定IP        : DHCP / 自動割当 (MACVLAN_IPは空設定)"
 fi
 echo " 次のコマンドでコンテナを起動できます:"
 echo "   docker compose up -d"
