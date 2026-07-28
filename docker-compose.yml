@@ -20,6 +20,8 @@ services:
             - TS_STATE_DIR=/var/lib/tailscale
             - TS_USERSPACE=false
             - TS_EXTRA_ARGS=--accept-dns=false
+        networks:
+            - adgnet
         volumes:
             - ./data_tailscale:/var/lib/tailscale
             - ts_socket:/tmp
