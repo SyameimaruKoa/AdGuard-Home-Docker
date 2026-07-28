@@ -46,21 +46,82 @@ echo "Tailscale Hosts Sync Service started. (Update Interval: ${INTERVAL}s)"
 mkdir -p /opt/adguardhome/work
 
 while true; do
-    # Tailnet のドメイン名を取得 (例: bass-uaru.ts.net)
-    TS_DOMAIN=$(tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null | awk -F'"' '/"MagicDNSSuffix":/ {if ($4 != "") {print $4; exit}}' | tr -d '\r\n')
-
-    # status テキスト出力から IP とホスト名を安全に抽出
-    tailscale --socket=/tmp/tailscaled.sock status 2>/dev/null | awk -v domain="$TS_DOMAIN" '
-        NF >= 2 && ($1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ || $1 ~ /^[0-9a-fA-F:]+$/) {
-            ip = $1
-            host = tolower($2)
-            if (ip != "" && host != "" && host != "-") {
-                if (domain != "") {
-                    print ip "\t" host "\t" host "." domain
+    # tailscale status --json から IPv4 / IPv6 およびホスト名・FQDNを完全抽出
+    tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null | awk '
+        function expand_ipv6(ip,   a, n, i, zero_count, res, p, val) {
+            if (index(ip, ":") == 0) return ip;
+            n = split(ip, a, ":")
+            zero_count = 8 - n + 1
+            res = ""
+            for (i = 1; i <= n; i++) {
+                if (a[i] == "") {
+                    for (p = 0; p < zero_count; p++) {
+                        res = (res == "") ? "0000" : res ":0000"
+                    }
                 } else {
-                    print ip "\t" host
+                    val = sprintf("%04s", a[i])
+                    gsub(/ /, "0", val)
+                    res = (res == "") ? val : res ":" val
                 }
             }
+            return res
+        }
+
+
+        function output_node() {
+            if (hn != "") {
+                for (i in ips) {
+                    if (ips[i] != "") {
+                        if (dns != "") {
+                            print ips[i] "\t" hn "\t" dns
+                        } else {
+                            print ips[i] "\t" hn
+                        }
+
+                        # IPv6 の場合、AdGuard Home の ip6.arpa 逆引き対応のため展開形式も出力
+                        if (index(ips[i], ":") > 0) {
+                            exp_ip = expand_ipv6(ips[i])
+                            if (exp_ip != ips[i]) {
+                                if (dns != "") {
+                                    print exp_ip "\t" hn "\t" dns
+                                } else {
+                                    print exp_ip "\t" hn
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            hn = ""
+            dns = ""
+            delete ips
+            ip_count = 0
+        }
+        /"HostName":/ {
+            output_node()
+            split($0, a, "\"")
+            hn = tolower(a[4])
+            gsub(/ /, "-", hn)
+        }
+        /"DNSName":/ {
+            split($0, a, "\"")
+            dns = a[4]
+            sub(/\.$/, "", dns)
+        }
+        /"TailscaleIPs":/ {
+            in_ips = 1
+            next
+        }
+        in_ips && /]/ {
+            in_ips = 0
+        }
+        in_ips && /"/ {
+            split($0, a, "\"")
+            ip_count++
+            ips[ip_count] = a[2]
+        }
+        END {
+            output_node()
         }
     ' > /opt/adguardhome/work/hosts.tmp 2>/dev/null || true
 
@@ -71,6 +132,8 @@ while true; do
 
     sleep "$INTERVAL"
 done
+
+
 
 
 
