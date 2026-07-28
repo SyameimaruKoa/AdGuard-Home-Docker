@@ -21,11 +21,44 @@ show_help() {
     echo "  --skip-wifi              Wi-Fiネットワークの検出・自動作成をスキップします。"
     echo ""
     echo "説明:"
-    echo "  引数なしで実行すると、すべての設定項目（有線/無線固定IP、WPA3接続設定、パススルーモード等）を"
+    echo "  引数なしで実行すると、Linuxのsysfs / iw / nmcli / ip link を用いて無線物理インターフェースを自動検出し、"
+    echo "  すべての設定項目（有線/無線固定IP、WPA3接続設定、パススルーモード等）を"
     echo "  インタラクティブ（対話型プロンプト）にカスタマイズ・選択して .env を生成することができます。"
     echo "  Wi-Fiネットワーク側はデフォルトゲートウェイを配置しない設定（--gatewayなし）で生成されるため、"
     echo "  不要な外向き通信は発生せず、55.0/24 セグメント内の直接DNS解決専用として安全に動作します。"
     exit 0
+}
+
+# ------------------------------------------------------------
+# 無線物理インターフェースの多角的高精度自動検出関数
+# ------------------------------------------------------------
+detect_wifi_interface() {
+    local iface=""
+
+    # 1. sysfs から物理無線デバイスを確認 (/sys/class/net/*/wireless または phy80211)
+    for sys_path in /sys/class/net/*; do
+        if [ -d "$sys_path/wireless" ] || [ -d "$sys_path/phy80211" ]; then
+            iface=$(basename "$sys_path")
+            break
+        fi
+    done
+
+    # 2. iw dev コマンドから抽出試行
+    if [ -z "$iface" ] && command -v iw >/dev/null 2>&1; then
+        iface=$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2; exit}')
+    fi
+
+    # 3. NetworkManager (nmcli) から wifi デバイスを抽出試行
+    if [ -z "$iface" ] && command -v nmcli >/dev/null 2>&1; then
+        iface=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | grep ':wifi$' | cut -d: -f1 | head -n 1)
+    fi
+
+    # 4. ip link のインターフェース名パターン (wl*, wlan*) から抽出試行
+    if [ -z "$iface" ]; then
+        iface=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^(wl|wlan)' | head -n 1)
+    fi
+
+    echo "$iface"
 }
 
 # ------------------------------------------------------------
@@ -187,7 +220,7 @@ fi
 echo ""
 
 # ------------------------------------------------------------
-# 3. 対話型 Wi-Fi (WPA2/WPA3) 接続処理関数
+# 3. 対話型 Wi-Fi (WPA2/WPA3) 接続処理関数 (sudo 権限制御対応)
 # ------------------------------------------------------------
 wifi_interactive_connect() {
     local wifi_if="$1"
@@ -201,10 +234,16 @@ wifi_interactive_connect() {
         return 1
     fi
 
+    # sudo コマンド前置用ヘルパー
+    SUDO_CMD=""
+    if [ "$(id -u)" -ne 0 ]; then
+        SUDO_CMD="sudo"
+    fi
+
     echo "周囲の Wi-Fi アクセスポイントをスキャンしています..."
-    nmcli dev wifi rescan ifname "$wifi_if" 2>/dev/null || true
+    $SUDO_CMD nmcli dev wifi rescan ifname "$wifi_if" 2>/dev/null || true
     sleep 2
-    nmcli dev wifi list ifname "$wifi_if" || true
+    $SUDO_CMD nmcli dev wifi list ifname "$wifi_if" || true
     echo ""
 
     read -p "接続する Wi-Fi SSID を入力してください: " TARGET_SSID
@@ -217,7 +256,7 @@ wifi_interactive_connect() {
     echo ""
 
     echo "Wi-Fi '$TARGET_SSID' に接続を試行しています..."
-    if nmcli dev wifi connect "$TARGET_SSID" password "$TARGET_PASS" ifname "$wifi_if"; then
+    if $SUDO_CMD nmcli dev wifi connect "$TARGET_SSID" password "$TARGET_PASS" ifname "$wifi_if"; then
         echo "SUCCESS: Wi-Fi '$TARGET_SSID' に正常に接続しました。"
 
         if [ -t 0 ]; then
@@ -228,8 +267,8 @@ wifi_interactive_connect() {
             read -p "ホスト OS の IP を無効化してコンテナ専有にする [y/N]: " DISABLE_HOST_IP
             if [ "$DISABLE_HOST_IP" = "y" ] || [ "$DISABLE_HOST_IP" = "Y" ]; then
                 echo "ホスト OS 側の IP 割り当てを無効化しています..."
-                nmcli connection modify "$TARGET_SSID" ipv4.method disabled ipv6.method ignore || true
-                nmcli connection up "$TARGET_SSID" || true
+                $SUDO_CMD nmcli connection modify "$TARGET_SSID" ipv4.method disabled ipv6.method ignore || true
+                $SUDO_CMD nmcli connection up "$TARGET_SSID" || true
                 echo "ホスト OS 側の IP 割り当てが無効化され、物理 L2 リンクのみ維持されました。"
             fi
         fi
@@ -240,11 +279,26 @@ wifi_interactive_connect() {
 }
 
 # ------------------------------------------------------------
-# 4. Wi-Fi 物理ネットワークの検出・対話型フル設定（デフォルトゲートウェイ未設定）
+# 4. Wi-Fi 物理ネットワークの自動検出・対話型フル設定
 # ------------------------------------------------------------
 WIFI_PARENT_IF=""
 WIFI_SUBNET_CIDR=""
 WIFI_IP_VALUE=""
+
+# 無線物理インターフェースの高精度自動検出
+DETECTED_WIFI_IF=$(detect_wifi_interface)
+
+if [ -n "$WIFI_IF_ARG" ]; then
+    WIFI_PARENT_IF="$WIFI_IF_ARG"
+elif [ -n "$DETECTED_WIFI_IF" ]; then
+    WIFI_PARENT_IF="$DETECTED_WIFI_IF"
+fi
+
+if [ -n "$WIFI_PARENT_IF" ]; then
+    echo "自動検出された Wi-Fi 物理インターフェース: $WIFI_PARENT_IF"
+else
+    echo "INFO: ホスト上に物理 Wi-Fi インターフェースが検出されませんでした。"
+fi
 
 # 引数なし（対話モード）の全設定カスタマイズプロンプト
 if [ "$HAS_ARGS" = false ] && [ -t 0 ]; then
@@ -257,16 +311,9 @@ if [ "$HAS_ARGS" = false ] && [ -t 0 ]; then
 fi
 
 if [ "$SKIP_WIFI" = false ]; then
-    if [ -n "$WIFI_IF_ARG" ]; then
-        WIFI_PARENT_IF="$WIFI_IF_ARG"
-    else
-        # Wi-Fi インターフェース (wl*) の自動検索
-        WIFI_PARENT_IF=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^wl' | head -n 1)
-    fi
-
     if [ -n "$WIFI_PARENT_IF" ] || [ "$HAS_ARGS" = false ]; then
         if [ -t 0 ] && [ "$HAS_ARGS" = false ]; then
-            read -p "使用する Wi-Fi インターフェース名を入力・確認してください [${WIFI_PARENT_IF:-wlp2s0}]: " INPUT_WIFI_IF
+            read -p "使用する Wi-Fi インターフェース名を確認してください [${WIFI_PARENT_IF:-wlp2s0}]: " INPUT_WIFI_IF
             if [ -n "$INPUT_WIFI_IF" ]; then
                 WIFI_PARENT_IF="$INPUT_WIFI_IF"
             fi
@@ -340,7 +387,6 @@ if [ "$SKIP_WIFI" = false ]; then
                     echo "既存の Docker ネットワークを検出しました: '$IPVLAN_NET_NAME'"
                 else
                     echo "Docker ネットワーク ($NET_DRIVER, gatewayなし) を作成します: '$IPVLAN_NET_NAME'"
-                    # --gateway なしで作成することにより不要なデフォルトルート生成を防止
                     docker network create -d "$NET_DRIVER" \
                         --subnet="$WIFI_SUBNET_CIDR" \
                         -o parent="$WIFI_PARENT_IF" \
