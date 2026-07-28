@@ -19,7 +19,7 @@ show_help() {
     echo "  現在のLinuxホストのデフォルトルートから、物理インターフェース名、"
     echo "  ゲートウェイ、サブネット情報を自動検出して .env ファイルを生成します。"
     echo "  ホスト上に既存の Docker Macvlan ネットワークが存在する場合は自動再利用し、"
-    echo "  存在しない場合は 'macvlan_lan' ネットワークを安全に自動作成します。"
+    echo "  存在しない場合は 'macvlan_lan' ネットワークを IPv6 有効で自動作成します。"
     exit 0
 }
 
@@ -81,7 +81,7 @@ echo "  - 物理サブネット        : $SUBNET_CIDR"
 echo ""
 
 # ------------------------------------------------------------
-# 既存 Docker Macvlan ネットワークの自動検索・安全作成
+# 既存 Docker Macvlan ネットワークの自動検索・IPv6対応作成
 # ------------------------------------------------------------
 EXISTING_NET=$(docker network ls --filter driver=macvlan --format '{{.Name}}' 2>/dev/null | head -n 1)
 
@@ -91,8 +91,9 @@ if [ -n "$EXISTING_NET" ]; then
     echo "プール重複エラー防止のため、このネットワークを再利用します。"
 else
     MACVLAN_NET_NAME="macvlan_lan"
-    echo "Docker Macvlan ネットワークが見つかりません。新規作成します: '$MACVLAN_NET_NAME'"
+    echo "Docker Macvlan ネットワークが見つかりません。IPv6対応で新規作成します: '$MACVLAN_NET_NAME'"
     docker network create -d macvlan \
+        --enable-ipv6 \
         --subnet="$SUBNET_CIDR" \
         --gateway="$GATEWAY_IP" \
         -o parent="$PARENT_IF" \
