@@ -1,22 +1,39 @@
 services:
-  adgrd:
-    image: adguard/adguardhome:latest
-    restart: unless-stopped
-    ports:
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "853:853/tcp"
-      - "13000:80/tcp"
-      #- "3000:3000/tcp"
-    environment:
-      - TZ=Asia/Tokyo
-    volumes:
-      - /srv/adgrd/work:/opt/adguardhome/work
-      - ./config:/opt/adguardhome/conf
-      - /var/log/adgrd:/var/log/adgrd
-    #networks:
-      #- adgnet
-    network_mode: host
+    tailscale:
+        image: tailscale/tailscale:latest
+        container_name: tailscale-node
+        restart: unless-stopped
+        cap_add:
+            - NET_ADMIN
+        devices:
+            - /dev/net/tun:/dev/net/tun
+        environment:
+            - TZ=${TZ:-Asia/Tokyo}
+            - TS_AUTHKEY=${TS_AUTHKEY}
+            - TS_HOSTNAME=${TS_HOSTNAME:-adguard-home}
+            - TS_STATE_DIR=/var/lib/tailscale
+            - TS_EXTRA_ARGS=--accept-dns=false
+        volumes:
+            - ./data_tailscale:/var/lib/tailscale
+        networks:
+            adgnet:
+                ipv4_address: ${MACVLAN_IP}
 
-#networks:
-  #adgnet:
+    adgrd:
+        image: adguard/adguardhome:latest
+        container_name: adguard-home
+        restart: unless-stopped
+        network_mode: "service:tailscale"
+        volumes:
+            - ./config:/opt/adguardhome/conf
+            - ./work:/opt/adguardhome/work
+
+networks:
+    adgnet:
+        driver: macvlan
+        driver_opts:
+            parent: ${MACVLAN_PARENT:-eth0}
+        ipam:
+            config:
+                - subnet: ${MACVLAN_SUBNET:-192.168.1.0/24}
+                  gateway: ${MACVLAN_GATEWAY:-192.168.1.1}
