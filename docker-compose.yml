@@ -22,9 +22,7 @@ services:
             - TS_EXTRA_ARGS=--accept-dns=false
         volumes:
             - ./data_tailscale:/var/lib/tailscale
-        networks:
-            adgnet:
-                ipv4_address: ${MACVLAN_IP}
+            - ts_socket:/tmp
 
     adgrd:
         image: adguard/adguardhome:latest
@@ -34,7 +32,21 @@ services:
         volumes:
             - ./config:/opt/adguardhome/conf
             - ./work:/opt/adguardhome/work
-            - ./hosts:/etc/hosts:ro
+            - ./work/hosts:/etc/hosts:ro
+
+    hosts-sync:
+        image: tailscale/tailscale:latest
+        container_name: adguard-hosts-sync
+        restart: unless-stopped
+        network_mode: "service:tailscale"
+        volumes:
+            - ts_socket:/tmp:ro
+            - ./work:/opt/adguardhome/work
+            - ./sync_hosts.sh:/sync_hosts.sh:ro
+        entrypoint: /bin/sh /sync_hosts.sh
+
+volumes:
+    ts_socket:
 
 networks:
     adgnet:
