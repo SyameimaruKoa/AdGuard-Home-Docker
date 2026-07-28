@@ -6,12 +6,12 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 
 ## 🌟 特徴
 
-- **100% 完全コンテナ化（ホスト汚染ゼロ）**: Tailnet デバイスの自動同期サービス (`hosts-sync`) を含めすべてが Docker Compose 内で完結します。ホスト OS 側の Cron 設定や外部スクリプトの常駐は一切不要で、`docker compose down` でコンテナを削除すればすべてが綺麗に消去・クリーンアップされます。
+- **100% 完全コンテナ化（ゼロ設定）**: Tailnet デバイスの自動同期サービス (`hosts-sync`) が Docker Compose 内で完結します。AdGuard Home Web UI での手動設定（`100.100.100.100` の登録など）は**一切不要**です。`docker compose up -d` を実行するだけで、全 Tailnet 端末の IPv4 / IPv6 逆引き（ホスト名表示）および正引きが即座に完了します。
+- **ホスト汚染ゼロ**: ホスト OS 側の Cron 設定や外部スクリプトの常駐は不要です。`docker compose down` でコンテナを削除すればすべてが綺麗に消去・クリーンアップされます。
 - **ゼロビルド（サイドカー構成）**: カスタム Dockerfile 不要。公式イメージ (`adguard/adguardhome:latest` および `tailscale/tailscale:latest`) を直接 `pull` して使用します。
 - **Macvlan 独立ネットワーク**: 物理 LAN 上の専用 IP アドレス（DHCP または 固定 IP）で起動し、ポート衝突を防ぎます。
 - **IPv4 / IPv6 デュアルスタック対応**: SLAAC (`accept_ra=2`) 対応および IPv6 サブネット自動検出に対応しています。
 - **Tailnet DNS 特化**: `--accept-dns=false` を標準指定し、コンテナ内での DNS ループを防ぎつつ Tailnet 内の DNS サーバーとして機能します。
-- **全自動 Tailnet デバイス同期 (`adguard-hosts-sync`)**: Tailscale 上の全デバイス（IPv4 / IPv6）の IP アドレスとホスト名をコンテナ内部で自動抽出し、AdGuard Home 上で即座に逆引き（ホスト名表示）を可能にします。
 - **認証キー期限切れ耐性**: `./data_tailscale` の永続化により、Initial Auth Key が期限切れになっても再起動時に認証が維持されます。
 - **全自動環境構築 (`setup.sh`)**: ホストの物理ネットワーク環境（NIC名、サブネット、ゲートウェイ）を自動検出し、`.env` を生成します。
 
@@ -73,32 +73,18 @@ docker compose up -d
 ```
 
 起動後、指定した IP アドレス（または Tailscale IP）の `http://<IP>:80` にアクセスして AdGuard Home の初期セットアップ画面を開きます。
-Tailnet 内のデバイス（IPv4 / IPv6）の逆引き・ホスト名マッピングは、`hosts-sync` コンテナによって全自動で同期されます。
+Tailnet 内の全デバイス（IPv4 / IPv6）の逆引き・ホスト名マッピングは、`hosts-sync` コンテナによって全自動で AdGuard Home に反映されます。
 
 ---
 
-## 🤖 コンテナ内部での自動同期 (`adguard-hosts-sync`)
+## 🤖 自動同期の仕組み (`adguard-hosts-sync`)
 
-Tailscale の仕様上、MagicDNS (`100.100.100.100`) では IPv6 逆引き (`.ip6.arpa`) が応答しません (`SERVFAIL`)。
-Docker Compose 内に組み込まれた `adguard-hosts-sync` コンテナが `tailscale/tailscale:latest` イメージを使用してローカルソケットから全端末の IPv4 および IPv6 アドレスとホスト名を自動抽出し、AdGuard Home に即座に自動反映します。
+Tailscale 側の仕様として、MagicDNS (`100.100.100.100`) 単体では IPv6 の逆引き (`.ip6.arpa`) に回答できません (`SERVFAIL`)。
 
-- ホスト OS 側の Cron や設定は一切不要です。
-- `docker compose down` を実行するだけで全コンテナが安全に削除・終了します。
+本構成では `adguard-hosts-sync` コンテナがバックグラウンドで全自動動作し、Tailscale のローカルソケットから全端末の **IPv4 および IPv6 アドレスとホスト名** を抽出し、AdGuard Home の `/etc/hosts` に書き込みます。
 
----
-
-## 🔑 Tailscale 逆引き（PTR）・正引き（DNS）設定
-
-### IPv4 (`100.x.y.z`) の設定方法
-
-1. AdGuard Home の Web UI で **設定** ➔ **DNS設定** を開きます。
-2. **アップストリームDNSサーバー**（上の大きな欄）に以下を追加します：
-   ```text
-   [/100.in-addr.arpa/]100.100.100.100
-   [/ts.net/]100.100.100.100
-   ```
-3. **プライベートリバースDNSサーバー**（下の欄）からは `100.in-addr.arpa` を除外し、物理ルーターの IP（例: `192.168.1.1` 等）のみを記述します。
-4. **プライベートリバースDNSの解決を有効にする** にチェックを入れて保存します。
+- **Web UI 上での `100.100.100.100` 登録は不要です**（登録時に発生する `Error 400` の心配もありません）。
+- **更新間隔の変更**: デフォルトでは 1時間（3,600秒）おきに更新されます。変更する場合は `.env` ファイルに `SYNC_INTERVAL=1800` （30分）などのように記述してください。
 
 ---
 
@@ -109,6 +95,7 @@ Docker Compose 内に組み込まれた `adguard-hosts-sync` コンテナが `ta
 | `TS_AUTHKEY` | Tailscale 認証キー (初回起動時のみ必要) | `tskey-auth-xxxx-xxxx` |
 | `TS_HOSTNAME` | Tailnet 内でのデバイス名 | `adguard-home` |
 | `TZ` | タイムゾーン | `Asia/Tokyo` |
+| `SYNC_INTERVAL` | Tailnet 端末の自動同期更新間隔 (秒) | `3600` (1時間) |
 | `MACVLAN_NETWORK_NAME` | 利用する Docker Macvlan ネットワーク名 | `macvlan_lan` |
 | `MACVLAN_PARENT` | 物理ネットワークインターフェース名 | `eth0`, `enp1s0` |
 | `MACVLAN_SUBNET` | 物理 IPv4 サブネット CIDR | `192.168.1.0/24` |
