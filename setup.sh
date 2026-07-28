@@ -61,6 +61,7 @@ echo "============================================================"
 # デフォルトインターフェースと IPv4/IPv6 ゲートウェイの自動検出
 PARENT_IF=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
 GATEWAY_IP=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')
+GATEWAY_IP6=$(ip -6 route show default 2>/dev/null | awk '/default/{print $3; exit}')
 
 if [ -z "$PARENT_IF" ] || [ -z "$GATEWAY_IP" ]; then
     echo "ERROR: デフォルトルートが見つかりませんでした。ネットワーク接続を確認してください。"
@@ -97,13 +98,16 @@ else
     MACVLAN_NET_NAME="macvlan_lan"
     echo "Docker Macvlan ネットワークが見つかりません。新規作成します: '$MACVLAN_NET_NAME'"
     
-    CREATE_ARGS=("-d" "macvlan" "--enable-ipv6" "--subnet=$SUBNET_CIDR" "--gateway=$GATEWAY_IP")
+    CREATE_ARGS=("network" "create" "-d" "macvlan" "--ipv6" "--subnet=$SUBNET_CIDR" "--gateway=$GATEWAY_IP")
     if [ -n "$SUBNET_CIDR6" ]; then
         CREATE_ARGS+=("--subnet=$SUBNET_CIDR6")
+        if [ -n "$GATEWAY_IP6" ]; then
+            CREATE_ARGS+=("--gateway=$GATEWAY_IP6")
+        fi
     fi
     CREATE_ARGS+=("-o" "parent=$PARENT_IF" "$MACVLAN_NET_NAME")
 
-    docker network create "${CREATE_ARGS[@]}" || true
+    docker "${CREATE_ARGS[@]}" || true
 fi
 
 echo ""
