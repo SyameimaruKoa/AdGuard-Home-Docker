@@ -39,6 +39,8 @@ services:
         container_name: adguard-hosts-sync
         restart: unless-stopped
         network_mode: "service:tailscale"
+        environment:
+            - SYNC_INTERVAL=${SYNC_INTERVAL:-3600}
         volumes:
             - ts_socket:/tmp:ro
             - ./work:/opt/adguardhome/work
