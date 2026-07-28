@@ -42,19 +42,35 @@ done
 
 echo "Tailscale Hosts Sync Service started. (Update Interval: ${INTERVAL}s)"
 
+# ワークディレクトリの準備
+mkdir -p /opt/adguardhome/work
+
 while true; do
-    tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null | awk '
-        /"HostName":/ { split($0, a, "\""); hn = tolower(a[4]); gsub(/ /, "-", hn); }
-        /"DNSName":/ { split($0, a, "\""); dns = a[4]; sub(/\.$/, "", dns); }
-        /"TailscaleIPs":/ { in_ips = 1; next }
-        in_ips && /]/ { in_ips = 0 }
-        in_ips && /"/ {
-            split($0, a, "\"")
-            ip = a[2]
-            if (ip != "" && hn != "") {
-                print ip "\t" hn "\t" dns
+    # Tailnet のドメイン名を取得 (例: bass-uaru.ts.net)
+    TS_DOMAIN=$(tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null | awk -F'"' '/"MagicDNSSuffix":/ {if ($4 != "") {print $4; exit}}' | tr -d '\r\n')
+
+    # status テキスト出力から IP とホスト名を安全に抽出
+    tailscale --socket=/tmp/tailscaled.sock status 2>/dev/null | awk -v domain="$TS_DOMAIN" '
+        NF >= 2 && ($1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ || $1 ~ /^[0-9a-fA-F:]+$/) {
+            ip = $1
+            host = tolower($2)
+            if (ip != "" && host != "" && host != "-") {
+                if (domain != "") {
+                    print ip "\t" host "\t" host "." domain
+                } else {
+                    print ip "\t" host
+                }
             }
         }
-    ' > /opt/adguardhome/work/hosts.tmp 2>/dev/null && mv /opt/adguardhome/work/hosts.tmp /opt/adguardhome/work/hosts 2>/dev/null || true
+    ' > /opt/adguardhome/work/hosts.tmp 2>/dev/null || true
+
+    if [ -s /opt/adguardhome/work/hosts.tmp ]; then
+        # bind mount の inode 破損を防ぐため cat で上書き
+        cat /opt/adguardhome/work/hosts.tmp > /opt/adguardhome/work/hosts 2>/dev/null || true
+    fi
+
     sleep "$INTERVAL"
 done
+
+
+
