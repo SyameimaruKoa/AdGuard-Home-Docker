@@ -9,11 +9,11 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 - **100% 完全コンテナ化（ゼロ設定）**: Tailnet デバイスの自動同期サービス (`hosts-sync`) が Docker Compose 内で完結します。AdGuard Home Web UI での手動設定（`100.100.100.100` の登録など）は**一切不要**です。`docker compose up -d` を実行するだけで、全 Tailnet 端末の IPv4 / IPv6 逆引き（ホスト名表示）および正引きが即座に完了します。
 - **ホスト汚染ゼロ**: ホスト OS 側の Cron 設定や外部スクリプトの常駐は不要です。`docker compose down` でコンテナを削除すればすべてが綺麗に消去・クリーンアップされます。
 - **ゼロビルド（サイドカー構成）**: カスタム Dockerfile 不要。公式イメージ (`adguard/adguardhome:latest` および `tailscale/tailscale:latest`) を直接 `pull` して使用します。
-- **Macvlan 独立ネットワーク**: 物理 LAN 上の専用 IP アドレス（DHCP または 固定 IP）で起動し、ポート衝突を防ぎます。
+- **Macvlan / IPvlan 独立ネットワーク**: 物理 LAN 上の専用 IP アドレス（DHCP または 固定 IP）で起動し、ポート衝突を防ぎます。有線 LAN（Macvlan）に加えて、Wi-Fi ネットワーク（IPvlan L2 モード）によるマルチホーム（デュアルインターフェース）接続に対応。別サブネット（例: `192.168.55.0/24`）の Wi-Fi 端末からも NAT（マスカレード）されることなく直アクセス・個別の送信元 IP 記録が可能です。
 - **IPv4 / IPv6 デュアルスタック対応**: SLAAC (`accept_ra=2`) 対応および IPv6 サブネット自動検出に対応しています。
 - **Tailnet DNS 特化**: `--accept-dns=false` を標準指定し、コンテナ内での DNS ループを防ぎつつ Tailnet 内の DNS サーバーとして機能します。
 - **認証キー期限切れ耐性**: `./data_tailscale` の永続化により、Initial Auth Key が期限切れになっても再起動時に認証が維持されます。
-- **全自動環境構築 (`setup.sh`)**: ホストの物理ネットワーク環境（NIC名、サブネット、ゲートウェイ）を自動検出し、`.env` を生成します。
+- **全自動環境構築 (`setup.sh`)**: ホストの物理ネットワーク環境（有線/無線 NIC名、サブネット、ゲートウェイ）を自動検出し、`.env` を生成します。
 
 ---
 
@@ -38,20 +38,26 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 
 ### 1. ネットワーク自動検出と `.env` 生成
 
-`setup.sh` を実行して物理ネットワークを検出します。
+`setup.sh` を実行して物理ネットワーク（有線 LAN & Wi-Fi）を検出します。
 
 ```bash
 # ヘルプ表示
 ./setup.sh -h
 
-# DHCP / 自動IP割り当てモード（推奨）
+# DHCP / 自動IP割り当てモード（有線・無線自動検出）
 ./setup.sh --dhcp
 
-# 固定IPアドレスを指定する場合
-./setup.sh --static-ip 192.168.1.250
+# 対話型 Wi-Fi 接続設定（WPA2/WPA3 対応）と Macvlan パススルーモードの有効化
+./setup.sh --wifi-connect --wifi-passthru
 
-# または対話型で実行
-./setup.sh
+# 固定IPアドレスを指定する場合（有線/無線指定）
+./setup.sh --static-ip 192.168.200.250 --wifi-ip 192.168.55.250
+
+
+
+# Wi-Fi ネットワーク生成をスキップする場合
+./setup.sh --skip-wifi
+
 ```
 
 ### 2. Tailscale 認証キーの設定
@@ -97,11 +103,16 @@ Tailscale 側の仕様として、MagicDNS (`100.100.100.100`) 単体では IPv6
 | `TZ` | タイムゾーン | `Asia/Tokyo` |
 | `SYNC_INTERVAL` | Tailnet 端末の自動同期更新間隔 (秒) | `3600` (1時間) |
 | `MACVLAN_NETWORK_NAME` | 利用する Docker Macvlan ネットワーク名 | `macvlan_lan` |
-| `MACVLAN_PARENT` | 物理ネットワークインターフェース名 | `eth0`, `enp1s0` |
-| `MACVLAN_SUBNET` | 物理 IPv4 サブネット CIDR | `192.168.1.0/24` |
-| `MACVLAN_GATEWAY` | 物理 IPv4 ルーターゲートウェイ | `192.168.1.1` |
-| `MACVLAN_IP` | 割当 IPv4 アドレス (空指定で DHCP / 自動割当) | `192.168.1.250` |
-| `MACVLAN_IP6` | 割当 IPv6 アドレス (空指定で SLAAC / 自動割当) | `240d:1a:xxxx::250` |
+| `MACVLAN_PARENT` | 有線 LAN 物理インターフェース名 | `eth0`, `enp1s0` |
+| `MACVLAN_SUBNET` | 有線 LAN IPv4 サブネット CIDR | `192.168.200.0/24` |
+| `MACVLAN_GATEWAY` | 有線 LAN IPv4 ゲートウェイ | `192.168.200.1` |
+| `MACVLAN_IP` | 割当 IPv4 アドレス (空指定で自動割当) | `192.168.200.250` |
+| `IPVLAN_WIFI_NET_NAME` | 利用する Docker IPvlan ネットワーク名 | `ipvlan_wifi` |
+| `IPVLAN_WIFI_PARENT` | Wi-Fi 物理インターフェース名 | `wlan0`, `wlp2s0` |
+| `IPVLAN_WIFI_SUBNET` | Wi-Fi IPv4 サブネット CIDR | `192.168.55.0/24` |
+| `IPVLAN_WIFI_GATEWAY` | Wi-Fi IPv4 ゲートウェイ | `192.168.55.1` |
+| `IPVLAN_WIFI_IP` | Wi-Fi 割当 IPv4 アドレス (空指定で自動割当) | `192.168.55.250` |
+
 
 ---
 

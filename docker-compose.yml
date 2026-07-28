@@ -22,6 +22,7 @@ services:
             - TS_EXTRA_ARGS=--accept-dns=false
         networks:
             - adgnet
+            - ipvlan_wifi
         volumes:
             - ./data_tailscale:/var/lib/tailscale
             - ts_socket:/tmp
@@ -56,3 +57,7 @@ networks:
     adgnet:
         name: ${MACVLAN_NETWORK_NAME:-macvlan_lan}
         external: true
+    ipvlan_wifi:
+        name: ${IPVLAN_WIFI_NET_NAME:-ipvlan_wifi}
+        external: true
+
