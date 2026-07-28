@@ -6,11 +6,12 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 
 ## 🌟 特徴
 
+- **100% 完全コンテナ化（ホスト汚染ゼロ）**: Tailnet デバイスの自動同期サービス (`hosts-sync`) を含めすべてが Docker Compose 内で完結します。ホスト OS 側の Cron 設定や外部スクリプトの常駐は一切不要で、`docker compose down` でコンテナを削除すればすべてが綺麗に消去・クリーンアップされます。
 - **ゼロビルド（サイドカー構成）**: カスタム Dockerfile 不要。公式イメージ (`adguard/adguardhome:latest` および `tailscale/tailscale:latest`) を直接 `pull` して使用します。
 - **Macvlan 独立ネットワーク**: 物理 LAN 上の専用 IP アドレス（DHCP または 固定 IP）で起動し、ポート衝突を防ぎます。
 - **IPv4 / IPv6 デュアルスタック対応**: SLAAC (`accept_ra=2`) 対応および IPv6 サブネット自動検出に対応しています。
 - **Tailnet DNS 特化**: `--accept-dns=false` を標準指定し、コンテナ内での DNS ループを防ぎつつ Tailnet 内の DNS サーバーとして機能します。
-- **全自動 Tailnet デバイス同期 (`sync_tailscale_hosts.sh`)**: Tailscale 上の全デバイス（IPv4 / IPv6）の IP アドレスとホスト名を自動抽出・マッピングし、AdGuard Home 上で即座に逆引き（ホスト名表示）を可能にします。
+- **全自動 Tailnet デバイス同期 (`adguard-hosts-sync`)**: Tailscale 上の全デバイス（IPv4 / IPv6）の IP アドレスとホスト名をコンテナ内部で自動抽出し、AdGuard Home 上で即座に逆引き（ホスト名表示）を可能にします。
 - **認証キー期限切れ耐性**: `./data_tailscale` の永続化により、Initial Auth Key が期限切れになっても再起動時に認証が維持されます。
 - **全自動環境構築 (`setup.sh`)**: ホストの物理ネットワーク環境（NIC名、サブネット、ゲートウェイ）を自動検出し、`.env` を生成します。
 
@@ -20,16 +21,15 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 
 ```text
 .
-├── docker-compose.yml       # コンテナ構成定義（Sidecarパターン）
-├── setup.sh                 # 物理ネットワーク自動検出 & .env 生成スクリプト
-├── sync_tailscale_hosts.sh  # Tailnet 端末 (IPv4/IPv6) 自動同期 & hosts 生成スクリプト
-├── .env.example             # 環境変数テンプレート
-├── .gitignore               # 永続化データ・設定ファイルの除外設定
-├── README.md                # 本ドキュメント
-├── hosts                    # [自動生成] Tailscale 端末の IP/ホスト名マッピング
-├── config/                  # [自動生成] AdGuard Home 設定ディレクトリ
-├── work/                    # [自動生成] AdGuard Home データベース・作業ログ
-└── data_tailscale/          # [自動生成] Tailscale 認証ステート永続化ディレクトリ
+├── docker-compose.yml   # コンテナ構成定義（Tailscale + AdGuard Home + Hosts Sync）
+├── setup.sh             # 物理ネットワーク自動検出 & .env 生成スクリプト
+├── sync_hosts.sh        # コンテナ内部用 Tailnet 端末 (IPv4/IPv6) 自動同期スクリプト
+├── .env.example         # 環境変数テンプレート
+├── .gitignore           # 永続化データ・設定ファイルの除外設定
+├── README.md            # 本ドキュメント
+├── config/              # [自動生成] AdGuard Home 設定ディレクトリ
+├── work/                # [自動生成] AdGuard Home データベース・作業ログ
+└── data_tailscale/      # [自動生成] Tailscale 認証ステート永続化ディレクトリ
 ```
 
 ---
@@ -66,35 +66,24 @@ nano .env
 # TS_AUTHKEY=tskey-auth-xxxx-xxxx
 ```
 
-### 3. コンテナの起動と Tailnet デバイス同期
+### 3. コンテナの起動
 
 ```bash
-# コンテナの起動
 docker compose up -d
-
-# Tailscale 端末 (IPv4/IPv6) マッピングの自動生成
-./sync_tailscale_hosts.sh
 ```
+
+起動後、指定した IP アドレス（または Tailscale IP）の `http://<IP>:80` にアクセスして AdGuard Home の初期セットアップ画面を開きます。
+Tailnet 内のデバイス（IPv4 / IPv6）の逆引き・ホスト名マッピングは、`hosts-sync` コンテナによって全自動で同期されます。
 
 ---
 
-## 🤖 Tailnet デバイス自動同期 (`sync_tailscale_hosts.sh`)
+## 🤖 コンテナ内部での自動同期 (`adguard-hosts-sync`)
 
 Tailscale の仕様上、MagicDNS (`100.100.100.100`) では IPv6 逆引き (`.ip6.arpa`) が応答しません (`SERVFAIL`)。
-本スクリプトを実行することで、Tailnet 内の全デバイス（IPv4 および IPv6）の IP アドレスとホスト名を自動取得し、AdGuard Home 上で完全に逆引き解決（ホスト名表示）できるようにします。
+Docker Compose 内に組み込まれた `adguard-hosts-sync` コンテナが `tailscale/tailscale:latest` イメージを使用してローカルソケットから全端末の IPv4 および IPv6 アドレスとホスト名を自動抽出し、AdGuard Home に即座に自動反映します。
 
-### 使い方
-
-```bash
-# ヘルプ表示
-./sync_tailscale_hosts.sh -h
-
-# 手動同期の実行
-./sync_tailscale_hosts.sh
-
-# Cron 等による定期実行 (5分ごとに静かに自動更新)
-*/5 * * * * cd /opt/Docker_Container/AdGuard-Home-DockerConfig && ./sync_tailscale_hosts.sh --quiet
-```
+- ホスト OS 側の Cron や設定は一切不要です。
+- `docker compose down` を実行するだけで全コンテナが安全に削除・終了します。
 
 ---
 
