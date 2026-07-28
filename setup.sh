@@ -220,7 +220,7 @@ fi
 echo ""
 
 # ------------------------------------------------------------
-# 3. 対話型 Wi-Fi (WPA2/WPA3) 接続処理関数 (sudo 権限制御対応)
+# 3. 対話型 Wi-Fi (WPA2/WPA3) 接続処理関数
 # ------------------------------------------------------------
 wifi_interactive_connect() {
     local wifi_if="$1"
@@ -234,7 +234,6 @@ wifi_interactive_connect() {
         return 1
     fi
 
-    # sudo コマンド前置用ヘルパー
     SUDO_CMD=""
     if [ "$(id -u)" -ne 0 ]; then
         SUDO_CMD="sudo"
@@ -270,6 +269,8 @@ wifi_interactive_connect() {
                 $SUDO_CMD nmcli connection modify "$TARGET_SSID" ipv4.method disabled ipv6.method ignore || true
                 $SUDO_CMD nmcli connection up "$TARGET_SSID" || true
                 echo "ホスト OS 側の IP 割り当てが無効化され、物理 L2 リンクのみ維持されました。"
+                # 専有化が選択されたため、Macvlanパススルーモードを自動有効化
+                WIFI_PASSTHRU=true
             fi
         fi
     else
@@ -332,8 +333,8 @@ if [ "$SKIP_WIFI" = false ]; then
                 fi
             fi
 
-            # 対話型 動作モード選択 (IPvlan 共有 vs Macvlan パススルー)
-            if [ -t 0 ] && [ "$HAS_ARGS" = false ]; then
+            # 専有化（L2化）が未選択の場合のみ動作モードを選択
+            if [ -t 0 ] && [ "$HAS_ARGS" = false ] && [ "$WIFI_PASSTHRU" = false ]; then
                 echo ""
                 echo "Wi-Fi 動作モードを選択してください:"
                 echo "  1) IPvlan L2 モード (ホスト共有 / デフォルト)"
@@ -361,8 +362,23 @@ if [ "$SKIP_WIFI" = false ]; then
                 WIFI_IP_VALUE="$WIFI_IP_ARG"
             fi
             
-            # サブネットの取得
+            # サブネットの取得 (ルーティングテーブル -> 入力IP補正 -> 対話プロンプト)
             WIFI_SUBNET_CIDR=$(ip route show dev "$WIFI_PARENT_IF" 2>/dev/null | grep '/' | awk '{print $1; exit}')
+
+            # ホストOSのIPが無効化されている場合、設定された固定IPからサブネットを補正自動抽出
+            if [ -z "$WIFI_SUBNET_CIDR" ] && [ -n "$WIFI_IP_VALUE" ]; then
+                WIFI_SUBNET_CIDR=$(echo "$WIFI_IP_VALUE" | sed -E 's/\.[0-9]+$/\.0\/24/')
+            fi
+
+            # それでも取得できない場合は対話入力または標準補完
+            if [ -z "$WIFI_SUBNET_CIDR" ]; then
+                if [ -t 0 ]; then
+                    read -p "Wi-Fi 側のサブネット CIDR を入力してください [192.168.55.0/24]: " INPUT_WIFI_SUBNET
+                    WIFI_SUBNET_CIDR="${INPUT_WIFI_SUBNET:-192.168.55.0/24}"
+                else
+                    WIFI_SUBNET_CIDR="192.168.55.0/24"
+                fi
+            fi
 
             # パススルーモードの有無に応じたドライバ・ネットワーク名の設定
             if [ "$WIFI_PASSTHRU" = true ]; then
