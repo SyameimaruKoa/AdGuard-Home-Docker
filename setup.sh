@@ -16,16 +16,15 @@ show_help() {
     echo "  --static-ip <IP_ADDRESS> 有線LAN側のコンテナに設定する固定IPアドレスを指定します。"
     echo "  --wifi-if <INTERFACE>    使用するWi-Fi物理インターフェース名（例: wlp2s0, wlan0）を指定します。"
     echo "  --wifi-ip <IP_ADDRESS>    Wi-Fi側のコンテナに設定する固定IPアドレスを指定します。"
-    echo "  --wifi-passthru          Wi-FiネットワークをMacvlanパススルーモード（コンテナ専有）で構築します。"
     echo "  --wifi-connect           対話型（インタラクティブ）でWi-Fi（WPA2/WPA3）のSSID/パスワードを設定・接続します。"
     echo "  --skip-wifi              Wi-Fiネットワークの検出・自動作成をスキップします。"
     echo ""
     echo "説明:"
     echo "  引数なしで実行すると、Linuxのsysfs / iw / nmcli / ip link を用いて無線物理インターフェースを自動検出し、"
-    echo "  すべての設定項目（有線/無線固定IP、WPA3接続設定、パススルーモード等）を"
+    echo "  すべての設定項目（有線/無線固定IP、WPA3接続設定等）を"
     echo "  インタラクティブ（対話型プロンプト）にカスタマイズ・選択して .env を生成することができます。"
-    echo "  Wi-Fiネットワーク側はデフォルトゲートウェイを配置しない設定（--gatewayなし）で生成されるため、"
-    echo "  不要な外向き通信は発生せず、55.0/24 セグメント内の直接DNS解決専用として安全に動作します。"
+    echo "  Wi-Fiネットワーク側は IPvlan L2 モード（MACアドレス変更エラー防止）かつデフォルトゲートウェイ未指定で生成され、"
+    echo "  55.0/24 セグメント内の直接DNS解決専用として安全かつ確実に動作します。"
     exit 0
 }
 
@@ -68,7 +67,6 @@ STATIC_IP=""
 USE_DHCP=false
 WIFI_IF_ARG=""
 WIFI_IP_ARG=""
-WIFI_PASSTHRU=false
 WIFI_CONNECT=false
 SKIP_WIFI=false
 
@@ -112,10 +110,6 @@ while [ $# -gt 0 ]; do
                 echo "ERROR: --wifi-ip に指定するIPアドレスが必要です。"
                 exit 1
             fi
-            ;;
-        --wifi-passthru)
-            WIFI_PASSTHRU=true
-            shift
             ;;
         --wifi-connect)
             WIFI_CONNECT=true
@@ -269,8 +263,6 @@ wifi_interactive_connect() {
                 $SUDO_CMD nmcli connection modify "$TARGET_SSID" ipv4.method disabled ipv6.method ignore || true
                 $SUDO_CMD nmcli connection up "$TARGET_SSID" || true
                 echo "ホスト OS 側の IP 割り当てが無効化され、物理 L2 リンクのみ維持されました。"
-                # 専有化が選択されたため、Macvlanパススルーモードを自動有効化
-                WIFI_PASSTHRU=true
             fi
         fi
     else
@@ -280,7 +272,7 @@ wifi_interactive_connect() {
 }
 
 # ------------------------------------------------------------
-# 4. Wi-Fi 物理ネットワークの自動検出・対話型フル設定
+# 4. Wi-Fi 物理ネットワークの自動検出・対話型フル設定 (IPvlan L2構成)
 # ------------------------------------------------------------
 WIFI_PARENT_IF=""
 WIFI_SUBNET_CIDR=""
@@ -333,20 +325,6 @@ if [ "$SKIP_WIFI" = false ]; then
                 fi
             fi
 
-            # 専有化（L2化）が未選択の場合のみ動作モードを選択
-            if [ -t 0 ] && [ "$HAS_ARGS" = false ] && [ "$WIFI_PASSTHRU" = false ]; then
-                echo ""
-                echo "Wi-Fi 動作モードを選択してください:"
-                echo "  1) IPvlan L2 モード (ホスト共有 / デフォルト)"
-                echo "  2) Macvlan パススルーモード (コンテナ専有 / 物理MAC直通)"
-                read -p "選択 [1/2]: " MODE_CHOICE
-                if [ "$MODE_CHOICE" = "2" ]; then
-                    WIFI_PASSTHRU=true
-                else
-                    WIFI_PASSTHRU=false
-                fi
-            fi
-
             # 対話型 Wi-Fi 側 IP 割り当て指定
             if [ -t 0 ] && [ "$HAS_ARGS" = false ]; then
                 echo ""
@@ -380,18 +358,14 @@ if [ "$SKIP_WIFI" = false ]; then
                 fi
             fi
 
-            # パススルーモードの有無に応じたドライバ・ネットワーク名の設定
-            if [ "$WIFI_PASSTHRU" = true ]; then
-                NET_DRIVER="macvlan"
-                NET_MODE_OPT=("-o" "macvlan_mode=passthru")
-                IPVLAN_NET_NAME="macvlan_wifi_passthru"
-                echo "選択モード: Macvlan パススルーモード（コンテナ専有）"
-            else
-                NET_DRIVER="ipvlan"
-                NET_MODE_OPT=("-o" "ipvlan_mode=l2")
-                IPVLAN_NET_NAME="ipvlan_wifi"
-                echo "選択モード: IPvlan L2 モード（ホスト共有）"
-            fi
+            # Wi-Fi NIC の安定動作ドライバ (ipvlan L2) を設定
+            NET_DRIVER="ipvlan"
+            NET_MODE_OPT=("-o" "ipvlan_mode=l2")
+            IPVLAN_NET_NAME="ipvlan_wifi"
+            echo "ネットワークモード: IPvlan L2 モード (Wi-Fi最適化構成)"
+
+            # 古いエラーの原因となる macvlan_wifi_passthru が存在する場合は削除
+            docker network rm macvlan_wifi_passthru 2>/dev/null || true
 
             if [ -n "$WIFI_SUBNET_CIDR" ]; then
                 echo "  - Wi-Fi IPv4 サブネット   : $WIFI_SUBNET_CIDR"
