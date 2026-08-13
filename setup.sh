@@ -165,9 +165,9 @@ echo "============================================================"
 # ------------------------------------------------------------
 # 1. 有線LAN（Macvlan）物理ネットワークの検出
 # ------------------------------------------------------------
-PARENT_IF=$(ip route show default 2>/dev/null | awk '/default/{print $5; exit}')
-GATEWAY_IP=$(ip route show default 2>/dev/null | awk '/default/{print $3; exit}')
-GATEWAY_IP6=$(ip -6 route show default 2>/dev/null | awk '/default/{print $3; exit}')
+PARENT_IF=$(ip route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}')
+GATEWAY_IP=$(ip route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="via"){print $(i+1); exit}}')
+GATEWAY_IP6=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="via"){print $(i+1); exit}}')
 
 if [ -z "$PARENT_IF" ] || [ -z "$GATEWAY_IP" ]; then
     echo "ERROR: デフォルトルートが見つかりませんでした。ネットワーク接続を確認してください。"
@@ -207,7 +207,7 @@ else
     CREATE_ARGS=("network" "create" "-d" "macvlan" "--ipv6" "--subnet=$SUBNET_CIDR" "--gateway=$GATEWAY_IP")
     if [ -n "$SUBNET_CIDR6" ]; then
         CREATE_ARGS+=("--subnet=$SUBNET_CIDR6")
-        if [ -n "$GATEWAY_IP6" ]; then
+        if [ -n "$GATEWAY_IP6" ] && [[ ! "$GATEWAY_IP6" =~ ^fe80: ]]; then
             CREATE_ARGS+=("--gateway=$GATEWAY_IP6")
         fi
     fi
