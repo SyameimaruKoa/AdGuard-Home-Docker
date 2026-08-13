@@ -23,8 +23,6 @@ services:
         networks:
             adgnet:
                 ipv4_address: ${MACVLAN_IP}
-            ipvlan_wifi:
-                ipv4_address: ${IPVLAN_WIFI_IP}
 
         volumes:
             - ./data_tailscale:/var/lib/tailscale
@@ -59,8 +57,5 @@ volumes:
 networks:
     adgnet:
         name: ${MACVLAN_NETWORK_NAME:-macvlan_lan}
-        external: true
-    ipvlan_wifi:
-        name: ${IPVLAN_WIFI_NET_NAME:-ipvlan_wifi}
         external: true
 

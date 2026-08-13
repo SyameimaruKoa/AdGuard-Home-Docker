@@ -434,12 +434,27 @@ if [ "$SKIP_WIFI" = false ]; then
     fi
 fi
 
-if [ "$SKIP_WIFI" = true ]; then
-    IPVLAN_NET_NAME="ipvlan_wifi"
-    EXISTING_WIFI_NET=$(docker network ls --filter name="$IPVLAN_NET_NAME" --format '{{.Name}}' 2>/dev/null | head -n 1)
-    if [ -z "$EXISTING_WIFI_NET" ]; then
-        docker network create -d bridge "$IPVLAN_NET_NAME" 2>/dev/null || true
+if [ -n "$WIFI_PARENT_IF" ] && [ "$SKIP_WIFI" = false ]; then
+    cat << 'EOF' > docker-compose.override.yml
+services:
+    tailscale:
+        networks:
+            ipvlan_wifi:
+                ipv4_address: ${IPVLAN_WIFI_IP}
+
+networks:
+    ipvlan_wifi:
+        name: ${IPVLAN_WIFI_NET_NAME:-ipvlan_wifi}
+        external: true
+EOF
+    echo "Wi-Fi 構成用の docker-compose.override.yml を自動生成しました。"
+else
+    if [ -f "docker-compose.override.yml" ]; then
+        rm -f docker-compose.override.yml
+        echo "LAN単体構成のため docker-compose.override.yml を削除しました。"
     fi
+    IPVLAN_NET_NAME="ipvlan_wifi"
+    docker network rm "$IPVLAN_NET_NAME" 2>/dev/null || true
 fi
 
 echo ""

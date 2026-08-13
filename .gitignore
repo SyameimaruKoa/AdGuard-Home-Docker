@@ -3,3 +3,5 @@ work/
 data_tailscale/
 .env
 hosts
+docker-compose.override.yml
+
