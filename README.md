@@ -44,20 +44,44 @@ Macvlan ネットワーク（IPv4/IPv6 デュアルスタック）上で動作�
 # ヘルプ表示
 ./setup.sh -h
 
+# 設定をリセットして有線LANのみ（無線無効化）にする場合
+./setup.sh --reset --lan-only
+
 # DHCP / 自動IP割り当てモード（有線・無線自動検出）
 ./setup.sh --dhcp
 
-# 対話型 Wi-Fi 接続設定（WPA2/WPA3 対応）と Macvlan パススルーモードの有効化
-./setup.sh --wifi-connect --wifi-passthru
+# 対話型 Wi-Fi 接続設定（WPA2/WPA3 対応）の有効化
+./setup.sh --wifi-connect
 
 # 固定IPアドレスを指定する場合（有線/無線指定）
 ./setup.sh --static-ip 192.168.200.250 --wifi-ip 192.168.55.250
 
+# 有線LANのみで固定IPを設定する場合
+./setup.sh --static-ip 192.168.200.250 --lan-only
+```
 
+---
 
-# Wi-Fi ネットワーク生成をスキップする場合
-./setup.sh --skip-wifi
+### 🔄 設定のリセットと構成の変更（無線無効化・LANのみへ変更など）
 
+既存の設定（`.env` や Docker ネットワーク、実行中コンテナ）をクリアにし、別のネットワーク構成へ切り替える場合は `--reset` オプションを使用します。
+
+#### 【例1】無線 (Wi-Fi) を無効化して LAN のみ（有線LAN単体）にする場合
+```bash
+# 1. 既存のコンテナ・旧ネットワークを停止・削除し、LANのみ（Wi-Fi無効）で再構築
+./setup.sh --reset --lan-only
+
+# 2. コンテナの再起動
+docker compose up -d
+```
+
+#### 【例2】既存設定を初期化し、固定 IP アドレスで再セットアップする場合
+```bash
+# 1. リセット後に有線LAN固定IPを指定
+./setup.sh --reset --static-ip 192.168.200.250 --lan-only
+
+# 2. コンテナの起動
+docker compose up -d
 ```
 
 ### 2. Tailscale 認証キーの設定

@@ -8,23 +8,33 @@ set -e
 show_help() {
     echo "Usage: ./setup.sh [OPTIONS]"
     echo ""
-    echo "AdGuard Home + Tailscale - ネットワーク自動検出・.env生成スクリプト"
+    echo "AdGuard Home + Tailscale - ネットワーク自動検出・.env生成・リセットスクリプト"
     echo ""
     echo "Options:"
     echo "  -h, --help               このヘルプメッセージを表示して終了します。"
+    echo "  --reset                  既存の設定・Dockerコンテナ・ネットワークをリセットして初期化します。"
+    echo "  --lan-only, --skip-wifi  Wi-Fi ネットワークの検出・自動作成をスキップし、有線LANのみの構成にします。"
     echo "  --dhcp                   有線LAN側で DHCP / 自動IP割り当てモードを使用します。"
     echo "  --static-ip <IP_ADDRESS> 有線LAN側のコンテナに設定する固定IPアドレスを指定します。"
     echo "  --wifi-if <INTERFACE>    使用するWi-Fi物理インターフェース名（例: wlp2s0, wlan0）を指定します。"
     echo "  --wifi-ip <IP_ADDRESS>    Wi-Fi側のコンテナに設定する固定IPアドレスを指定します。"
     echo "  --wifi-connect           対話型（インタラクティブ）でWi-Fi（WPA2/WPA3）のSSID/パスワードを設定・接続します。"
-    echo "  --skip-wifi              Wi-Fiネットワークの検出・自動作成をスキップします。"
+    echo ""
+    echo "使用例:"
+    echo "  1. 設定をリセットして有線LANのみ（無線無効化）に変更する場合:"
+    echo "     ./setup.sh --reset --lan-only"
+    echo ""
+    echo "  2. 有線LANのみで固定IPを設定する場合:"
+    echo "     ./setup.sh --static-ip 192.168.200.250 --lan-only"
+    echo ""
+    echo "  3. 有線LAN + Wi-Fi のデュアルネットワークで完全自動セットアップする場合:"
+    echo "     ./setup.sh --dhcp"
     echo ""
     echo "説明:"
-    echo "  引数なしで実行すると、Linuxのsysfs / iw / nmcli / ip link を用いて無線物理インターフェースを自動検出し、"
-    echo "  すべての設定項目（有線/無線固定IP、WPA3接続設定等）を"
-    echo "  インタラクティブ（対話型プロンプト）にカスタマイズ・選択して .env を生成することができます。"
-    echo "  Wi-Fiネットワーク側は IPvlan L2 モード（MACアドレス変更エラー防止）かつデフォルトゲートウェイ未指定で生成され、"
-    echo "  55.0/24 セグメント内の直接DNS解決専用として安全かつ確実に動作します。"
+    echo "  引数なしで実行すると、Linuxのsysfs / iw / nmcli / ip link を用いて物理インターフェースを自動検出し、"
+    echo "  すべての設定項目（有線/無線固定IP、WPA3接続設定等）を対話型プロンプトで設定できます。"
+    echo "  --reset オプションを指定すると、実行中の Docker コンテナの停止 (docker compose down) および"
+    echo "  旧 Docker ネットワークの削除を行い、新しい環境変数・構成ファイルをクリアな状態から再生成します。"
     exit 0
 }
 
@@ -69,6 +79,7 @@ WIFI_IF_ARG=""
 WIFI_IP_ARG=""
 WIFI_CONNECT=false
 SKIP_WIFI=false
+DO_RESET=false
 
 HAS_ARGS=false
 if [ $# -gt 0 ]; then
@@ -79,6 +90,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
         -h|--help)
             show_help
+            ;;
+        --reset)
+            DO_RESET=true
+            shift
             ;;
         --dhcp)
             USE_DHCP=true
@@ -115,7 +130,7 @@ while [ $# -gt 0 ]; do
             WIFI_CONNECT=true
             shift
             ;;
-        --skip-wifi)
+        --lan-only|--skip-wifi)
             SKIP_WIFI=true
             shift
             ;;
@@ -125,6 +140,23 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+if [ "$DO_RESET" = true ]; then
+    echo "============================================================"
+    echo " 設定および Docker ネットワークのリセットを実行中..."
+    echo "============================================================"
+    
+    if command -v docker >/dev/null 2>&1; then
+        echo "実行中の Docker コンテナを停止・削除しています..."
+        docker compose down 2>/dev/null || true
+
+        echo "既存の Docker ネットワークを削除しています..."
+        docker network rm macvlan_lan ipvlan_wifi 2>/dev/null || true
+    fi
+
+    echo "リセット処理が完了しました。"
+    echo ""
+fi
 
 echo "============================================================"
 echo " AdGuard Home + Tailscale - 物理ネットワーク自動検出 & 設定"
@@ -383,6 +415,7 @@ if [ "$SKIP_WIFI" = false ]; then
                         "${NET_MODE_OPT[@]}" \
                         "$IPVLAN_NET_NAME" || true
                 fi
+
             else
                 echo "WARN: Wi-Fi インターフェース $WIFI_PARENT_IF のサブネットが自動検出できませんでした。"
                 echo "Wi-Fi に正常に接続されているか確認してください。"
@@ -390,6 +423,14 @@ if [ "$SKIP_WIFI" = false ]; then
         else
             echo "INFO: 指定可能な Wi-Fi インターフェースが見つかりませんでした。スキップします。"
         fi
+    fi
+fi
+
+if [ "$SKIP_WIFI" = true ]; then
+    IPVLAN_NET_NAME="ipvlan_wifi"
+    EXISTING_WIFI_NET=$(docker network ls --filter name="$IPVLAN_NET_NAME" --format '{{.Name}}' 2>/dev/null | head -n 1)
+    if [ -z "$EXISTING_WIFI_NET" ]; then
+        docker network create -d bridge "$IPVLAN_NET_NAME" 2>/dev/null || true
     fi
 fi
 
