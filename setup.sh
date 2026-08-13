@@ -148,7 +148,8 @@ if [ "$DO_RESET" = true ]; then
     
     if command -v docker >/dev/null 2>&1; then
         echo "実行中の Docker コンテナを停止・削除しています..."
-        docker compose down 2>/dev/null || true
+        docker compose down --remove-orphans 2>/dev/null || true
+        docker rm -f adguard-tailscale adguard-home adguard-hosts-sync 2>/dev/null || true
 
         echo "既存の Docker ネットワークを削除しています..."
         docker network rm macvlan_lan ipvlan_wifi 2>/dev/null || true
@@ -196,13 +197,14 @@ echo ""
 # ------------------------------------------------------------
 EXISTING_NET=$(docker network ls --filter driver=macvlan --format '{{.Name}}' 2>/dev/null | head -n 1)
 
-if [ -n "$EXISTING_NET" ]; then
+if [ -n "$EXISTING_NET" ] && [ "$DO_RESET" = false ]; then
     MACVLAN_NET_NAME="$EXISTING_NET"
     echo "既存の Docker Macvlan ネットワークを検出しました: '$MACVLAN_NET_NAME'"
     echo "プール重複エラー防止のため、このネットワークを再利用します。"
 else
     MACVLAN_NET_NAME="macvlan_lan"
     echo "Docker Macvlan ネットワークが見つかりません。新規作成します: '$MACVLAN_NET_NAME'"
+    docker network rm "$MACVLAN_NET_NAME" 2>/dev/null || true
     
     CREATE_ARGS=("network" "create" "-d" "macvlan" "--ipv6" "--subnet=$SUBNET_CIDR" "--gateway=$GATEWAY_IP")
     if [ -n "$SUBNET_CIDR6" ]; then
