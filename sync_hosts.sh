@@ -45,6 +45,20 @@ echo "Tailscale Hosts Sync Service started. (Update Interval: ${INTERVAL}s)"
 # ワークディレクトリの準備
 mkdir -p /opt/adguardhome/work
 
+# 起動直後の Tailscale ソケット・ステータス接続待機ループ
+echo "Waiting for Tailscale service to initialize..."
+while true; do
+    if [ -S /tmp/tailscaled.sock ]; then
+        STATUS_JSON=$(tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null || true)
+        if echo "$STATUS_JSON" | grep -q '"TailscaleIPs"' && echo "$STATUS_JSON" | grep -q '"BackendState": "Running"'; then
+            echo "Tailscale service is ready."
+            break
+        fi
+    fi
+    echo "Tailscale service not ready yet. Retrying in 5 seconds..."
+    sleep 5
+done
+
 while true; do
     # tailscale status --json から IPv4 / IPv6 およびホスト名・FQDNを完全抽出
     tailscale --socket=/tmp/tailscaled.sock status --json 2>/dev/null | awk '
@@ -67,26 +81,43 @@ while true; do
             return res
         }
 
-
         function output_node() {
+            dns_short = ""
+            if (dns != "") {
+                split(dns, d, ".")
+                dns_short = tolower(d[1])
+                gsub(/[^a-zA-Z0-9_-]/, "-", dns_short)
+                gsub(/^-+|-+$/, "", dns_short)
+            }
+
+            if (hn == "" && dns_short != "") {
+                hn = dns_short
+            }
+
+            if (hn != "") {
+                gsub(/[^a-zA-Z0-9_-]/, "-", hn)
+                hn = tolower(hn)
+                gsub(/^-+|-+$/, "", hn)
+            }
+
             if (hn != "") {
                 for (i in ips) {
                     if (ips[i] != "") {
-                        if (dns != "") {
-                            print ips[i] "\t" hn "\t" dns
+                        if (dns_short != "" && dns_short != hn && dns != "") {
+                            names = hn "\t" dns_short "\t" dns
+                        } else if (dns != "") {
+                            names = hn "\t" dns
                         } else {
-                            print ips[i] "\t" hn
+                            names = hn
                         }
+
+                        print ips[i] "\t" names
 
                         # IPv6 の場合、AdGuard Home の ip6.arpa 逆引き対応のため展開形式も出力
                         if (index(ips[i], ":") > 0) {
                             exp_ip = expand_ipv6(ips[i])
                             if (exp_ip != ips[i]) {
-                                if (dns != "") {
-                                    print exp_ip "\t" hn "\t" dns
-                                } else {
-                                    print exp_ip "\t" hn
-                                }
+                                print exp_ip "\t" names
                             }
                         }
                     }
@@ -97,11 +128,11 @@ while true; do
             delete ips
             ip_count = 0
         }
+
         /"HostName":/ {
             output_node()
             split($0, a, "\"")
-            hn = tolower(a[4])
-            gsub(/ /, "-", hn)
+            hn = a[4]
         }
         /"DNSName":/ {
             split($0, a, "\"")
@@ -125,15 +156,16 @@ while true; do
         }
     ' > /opt/adguardhome/work/hosts.tmp 2>/dev/null || true
 
-    if [ -s /opt/adguardhome/work/hosts.tmp ]; then
-        # bind mount の inode 破損を防ぐため cat で上書き
-        cat /opt/adguardhome/work/hosts.tmp > /opt/adguardhome/work/hosts 2>/dev/null || true
+    # バリデーション: hosts.tmp に有効な IP アドレスマッピングが含まれているか検証
+    if [ -s /opt/adguardhome/work/hosts.tmp ] && grep -qE '^[0-9a-fA-F:.]+[[:space:]]+[a-zA-Z0-9_-]' /opt/adguardhome/work/hosts.tmp; then
+        # 既存ファイルと変更がある場合のみ更新
+        if ! cmp -s /opt/adguardhome/work/hosts.tmp /opt/adguardhome/work/hosts 2>/dev/null; then
+            echo "Updating /opt/adguardhome/work/hosts with new Tailscale hosts..."
+            cat /opt/adguardhome/work/hosts.tmp > /opt/adguardhome/work/hosts 2>/dev/null || true
+        fi
+    else
+        echo "WARN: Generated hosts.tmp is empty or invalid. Skipping update."
     fi
 
     sleep "$INTERVAL"
 done
-
-
-
-
-
