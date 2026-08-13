@@ -235,7 +235,13 @@ else
         echo "  2) 固定IP指定"
         read -p "選択 [1/2]: " CHOICE
         if [ "$CHOICE" = "2" ]; then
-            read -p "  -> 有線LANの固定IPv4アドレスを入力してください (例: 192.168.200.250): " INPUT_IP
+            EXPECTED_PREFIX=$(echo "$SUBNET_CIDR" | sed -E 's/\.[0-9]+\/[0-9]+$//')
+            read -p "  -> 有線LANの固定IPv4アドレスを入力してください (例: ${EXPECTED_PREFIX}.250): " INPUT_IP
+            INPUT_PREFIX=$(echo "$INPUT_IP" | sed -E 's/\.[0-9]+$//')
+            if [ -n "$INPUT_IP" ] && [ "$INPUT_PREFIX" != "$EXPECTED_PREFIX" ]; then
+                echo "【警告】入力された IP ($INPUT_IP) は、検出された有線LANサブネット ($SUBNET_CIDR) と一致しません。"
+                echo "        Docker の起動エラー防止のため、${EXPECTED_PREFIX}.x の範囲のアドレスを指定してください。"
+            fi
             MACVLAN_IP_VALUE="$INPUT_IP"
         else
             MACVLAN_IP_VALUE=""
